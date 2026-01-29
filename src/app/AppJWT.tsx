@@ -1,12 +1,17 @@
 /**
  * AlgoTrendy Dashboard - JWT Authenticated Version
  *
- * Example usage of useMetricsJWT hook with login flow.
+ * Features integrated:
+ *   #1 Unified Aggregator — uses /v1/metrics/aggregate with fallback
+ *   #2 Health Indicators  — HealthBadge in header + full card in status row
+ *   #3 Session Recording  — SessionTimeline panel at bottom
  */
 
 import React from "react";
 import { useMetricsJWT } from "../hooks/useMetricsJWT";
 import { LoginForm } from "../components/LoginForm";
+import { HealthBadge } from "./components/ui/health-badge";
+import { SessionTimeline } from "./components/SessionTimeline";
 
 export function AppJWT() {
   const {
@@ -14,6 +19,7 @@ export function AppJWT() {
     source,
     auth,
     isAuthenticated,
+    sessionId,
     isLoading,
     error,
     refresh,
@@ -46,6 +52,8 @@ export function AppJWT() {
         <h1>AlgoTrendy Dashboard</h1>
         <div className="header-actions">
           <span className="user-email">{auth.user?.email}</span>
+          {/* Feature #2: Health badge in header */}
+          <HealthBadge health={data?._health ?? null} mode="compact" />
           <span className={`source-badge ${source}`}>
             {source === "vps" ? "🟢 LIVE" : source === "mock" ? "🟡 MOCK" : "🔴 ERROR"}
           </span>
@@ -87,6 +95,9 @@ export function AppJWT() {
               <div className="status-value">{data.operatorRecommendation.value}</div>
               <p>{data.operatorRecommendation.details}</p>
             </div>
+
+            {/* Feature #2: Full health card in status row */}
+            <HealthBadge health={data._health} mode="full" />
           </div>
 
           {/* Markets */}
@@ -185,12 +196,19 @@ export function AppJWT() {
             </section>
           )}
 
+          {/* Feature #3: Session Timeline */}
+          <SessionTimeline
+            sessionId={sessionId}
+            isAuthenticated={isAuthenticated}
+          />
+
           {/* Footer */}
           <footer className="dashboard-footer">
             <span>Last updated: {data.timestamps.lastUpdatedMetrics}</span>
             <span>Source: {data._proxy.source}</span>
             <span>Auth: {data._proxy.auth}</span>
             <span>User: {data._proxy.user}</span>
+            <span>Latency: {data._proxy.totalLatencyMs}ms</span>
           </footer>
         </main>
       )}
@@ -278,7 +296,7 @@ export function AppJWT() {
 
         .status-row {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
           gap: 1.5rem;
           margin-bottom: 2rem;
         }
@@ -383,6 +401,7 @@ export function AppJWT() {
           padding-top: 1rem;
           border-top: 1px solid rgba(255, 255, 255, 0.1);
           display: flex;
+          flex-wrap: wrap;
           gap: 2rem;
           font-size: 0.75rem;
           color: rgba(255, 255, 255, 0.5);

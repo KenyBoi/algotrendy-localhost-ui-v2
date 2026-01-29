@@ -28,3 +28,9 @@ Thumbs.db
 # Local config (if any)
 .env
 *.local
+
+# Supabase temp files
+supabase/.temp/
+
+# Windows artifacts
+nul

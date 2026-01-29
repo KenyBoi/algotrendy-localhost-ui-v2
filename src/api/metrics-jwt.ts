@@ -96,13 +96,86 @@ export interface TimelineEvent {
   actor?: string;
 }
 
+// Feature #2: Health Indicators
+export interface EndpointHealthStatus {
+  status: "healthy" | "degraded" | "down";
+  lastSuccess: string | null;
+  lastFailure: string | null;
+  successRate: number;
+  avgLatencyMs: number;
+}
+
+export interface HealthIndicators {
+  vpsReachable: boolean;
+  totalEndpoints: number;
+  healthyEndpoints: number;
+  degradedEndpoints: number;
+  avgLatencyMs: number;
+  lastChecked: string;
+}
+
+export interface DetailedHealthResponse {
+  status: "ok" | "degraded";
+  vpsReachable: boolean;
+  totalEndpoints: number;
+  healthyEndpoints: number;
+  degradedEndpoints: number;
+  avgOverallLatencyMs: number;
+  endpoints: Record<string, EndpointHealthStatus>;
+  lastChecked: string;
+  _meta: {
+    service: string;
+    version: string;
+    user: string;
+    timestamp: string;
+  };
+}
+
+// Feature #3: Session Events
+export interface SessionEvent {
+  id: number;
+  session_id: string;
+  user_id: string;
+  event_type: string;
+  event_payload: Record<string, unknown>;
+  timestamp_utc: string;
+}
+
+export interface SessionEventsResponse {
+  events: SessionEvent[];
+  pagination: {
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+  _meta: {
+    sessionId: string;
+    user: string;
+    timestamp: string;
+  };
+}
+
+export interface SessionExportResponse {
+  sessionId: string;
+  eventCount: number;
+  events: SessionEvent[];
+  exportedAt: string;
+  user: string;
+}
+
 export interface ProxyMetadata {
   source: string;
   auth: string;
   user: string;
   userId: string;
   timestamp: string;
-  endpoints: Array<{ path: string; success: boolean; status: number }>;
+  endpoints: Array<{
+    path: string;
+    success: boolean;
+    status: number;
+    latencyMs: number;
+  }>;
+  totalLatencyMs: number;
 }
 
 export interface UnifiedMetricsPayload {
@@ -121,6 +194,9 @@ export interface UnifiedMetricsPayload {
     lastUpdatedMetrics: string;
     serverTime: string;
   };
+  _health: HealthIndicators;
+  riskCoupling: null; // Feature #5 stub
+  _roles: null; // Feature #9 stub
   _proxy: ProxyMetadata;
 }
 
@@ -162,9 +238,6 @@ function getSupabase(): SupabaseClient {
 // AUTHENTICATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Get current authentication state
- */
 export async function getAuthState(): Promise<AuthState> {
   try {
     const supabase = getSupabase();
@@ -187,18 +260,11 @@ export async function getAuthState(): Promise<AuthState> {
   }
 }
 
-/**
- * Get JWT token from current session
- * Returns null if not authenticated
- */
 export async function getJWT(): Promise<string | null> {
   const authState = await getAuthState();
   return authState.session?.access_token || null;
 }
 
-/**
- * Sign in with email/password
- */
 export async function signIn(
   email: string,
   password: string
@@ -219,24 +285,18 @@ export async function signIn(
   }
 }
 
-/**
- * Sign out
- */
 export async function signOut(): Promise<void> {
   const supabase = getSupabase();
   await supabase.auth.signOut();
 }
 
-/**
- * Subscribe to auth state changes
- */
 export function onAuthStateChange(
   callback: (authState: AuthState) => void
 ): () => void {
   const supabase = getSupabase();
 
   const { data: { subscription } } = supabase.auth.onAuthStateChange(
-    async (event, session) => {
+    async (_event, session) => {
       if (session) {
         callback({
           authenticated: true,
@@ -260,24 +320,40 @@ export function onAuthStateChange(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
+ * Build auth + session headers for Edge Function requests.
+ */
+async function buildHeaders(sessionId?: string): Promise<Record<string, string> | null> {
+  const jwt = await getJWT();
+  if (!jwt) return null;
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${jwt}`,
+    "Content-Type": "application/json",
+  };
+
+  if (sessionId) {
+    headers["X-Session-Id"] = sessionId;
+  }
+
+  return headers;
+}
+
+/**
  * Fetch a specific metrics path through the JWT proxy
  */
 export async function fetchMetricsPath<T = any>(
   path: string
 ): Promise<{ data: T | null; error: string | null }> {
   try {
-    const jwt = await getJWT();
-
-    if (!jwt) {
+    const headers = await buildHeaders();
+    if (!headers) {
       return { data: null, error: "Not authenticated. Please sign in." };
     }
 
-    const response = await fetch(`${EDGE_FUNCTION_BASE}/proxy?path=${encodeURIComponent(path)}`, {
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        "Content-Type": "application/json",
-      },
-    });
+    const response = await fetch(
+      `${EDGE_FUNCTION_BASE}/proxy?path=${encodeURIComponent(path)}`,
+      { headers }
+    );
 
     if (response.status === 401) {
       return { data: null, error: "Session expired. Please sign in again." };
@@ -302,38 +378,23 @@ export async function fetchMetricsPath<T = any>(
 }
 
 /**
- * Fetch the unified dashboard data
- * This is the primary method for getting all metrics in one call
+ * Fetch the unified dashboard data (DEPRECATED — prefer fetchAggregateData)
  */
-export async function fetchDashboardData(): Promise<{
+export async function fetchDashboardData(sessionId?: string): Promise<{
   data: UnifiedMetricsPayload | null;
   error: string | null;
   source: "vps" | "mock" | "error";
 }> {
   try {
-    const jwt = await getJWT();
-
-    if (!jwt) {
-      return {
-        data: null,
-        error: "Not authenticated. Please sign in.",
-        source: "error",
-      };
+    const headers = await buildHeaders(sessionId);
+    if (!headers) {
+      return { data: null, error: "Not authenticated. Please sign in.", source: "error" };
     }
 
-    const response = await fetch(`${EDGE_FUNCTION_BASE}/dashboard`, {
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        "Content-Type": "application/json",
-      },
-    });
+    const response = await fetch(`${EDGE_FUNCTION_BASE}/dashboard`, { headers });
 
     if (response.status === 401) {
-      return {
-        data: null,
-        error: "Session expired. Please sign in again.",
-        source: "error",
-      };
+      return { data: null, error: "Session expired. Please sign in again.", source: "error" };
     }
 
     if (!response.ok) {
@@ -354,6 +415,123 @@ export async function fetchDashboardData(): Promise<{
       source: "error",
     };
   }
+}
+
+/**
+ * Fetch aggregated metrics data via the v1 endpoint.
+ * Falls back to /dashboard if the v1 endpoint is unavailable.
+ */
+export async function fetchAggregateData(sessionId?: string): Promise<{
+  data: UnifiedMetricsPayload | null;
+  error: string | null;
+  source: "vps" | "mock" | "error";
+}> {
+  try {
+    const headers = await buildHeaders(sessionId);
+    if (!headers) {
+      return { data: null, error: "Not authenticated. Please sign in.", source: "error" };
+    }
+
+    // Try v1 endpoint first
+    const response = await fetch(
+      `${EDGE_FUNCTION_BASE}/v1/metrics/aggregate`,
+      { headers }
+    );
+
+    if (response.status === 401) {
+      return { data: null, error: "Session expired. Please sign in again.", source: "error" };
+    }
+
+    if (response.ok) {
+      const data = await response.json();
+      return { data, error: null, source: "vps" };
+    }
+
+    // Fall back to legacy /dashboard
+    console.warn("[metrics-jwt] v1/metrics/aggregate failed, falling back to /dashboard");
+    return fetchDashboardData(sessionId);
+  } catch (err) {
+    // Fall back to legacy
+    console.warn("[metrics-jwt] v1 fetch error, trying /dashboard:", err);
+    return fetchDashboardData(sessionId);
+  }
+}
+
+/**
+ * Fetch detailed health information (Feature #2)
+ */
+export async function fetchDetailedHealth(): Promise<{
+  data: DetailedHealthResponse | null;
+  error: string | null;
+}> {
+  try {
+    const headers = await buildHeaders();
+    if (!headers) {
+      return { data: null, error: "Not authenticated" };
+    }
+
+    const response = await fetch(
+      `${EDGE_FUNCTION_BASE}/v1/health/detailed`,
+      { headers }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      return { data: null, error: errorData.error || `Request failed: ${response.status}` };
+    }
+
+    const data = await response.json();
+    return { data, error: null };
+  } catch (err) {
+    return { data: null, error: err instanceof Error ? err.message : "Network error" };
+  }
+}
+
+/**
+ * Fetch session events (Feature #3)
+ */
+export async function fetchSessionEvents(opts?: {
+  sessionId?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{
+  data: SessionEventsResponse | null;
+  error: string | null;
+}> {
+  try {
+    const headers = await buildHeaders();
+    if (!headers) {
+      return { data: null, error: "Not authenticated" };
+    }
+
+    const params = new URLSearchParams();
+    if (opts?.sessionId) params.set("session_id", opts.sessionId);
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    if (opts?.offset) params.set("offset", String(opts.offset));
+
+    const url = `${EDGE_FUNCTION_BASE}/v1/sessions/events?${params}`;
+    const response = await fetch(url, { headers });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      return { data: null, error: errorData.error || `Request failed: ${response.status}` };
+    }
+
+    const data = await response.json();
+    return { data, error: null };
+  } catch (err) {
+    return { data: null, error: err instanceof Error ? err.message : "Network error" };
+  }
+}
+
+/**
+ * Get the URL for session export download (Feature #3)
+ */
+export function getSessionExportUrl(
+  sessionId: string,
+  format: "json" | "csv" | "text" = "json"
+): string {
+  return `${EDGE_FUNCTION_BASE}/v1/sessions/export?session_id=${encodeURIComponent(sessionId)}&format=${format}`;
 }
 
 /**
@@ -468,6 +646,16 @@ export function getMockDashboardData(): UnifiedMetricsPayload {
       lastUpdatedMetrics: now,
       serverTime: now,
     },
+    _health: {
+      vpsReachable: false,
+      totalEndpoints: 0,
+      healthyEndpoints: 0,
+      degradedEndpoints: 0,
+      avgLatencyMs: 0,
+      lastChecked: now,
+    },
+    riskCoupling: null,
+    _roles: null,
     _proxy: {
       source: "mock",
       auth: "none",
@@ -475,6 +663,7 @@ export function getMockDashboardData(): UnifiedMetricsPayload {
       userId: "mock-id",
       timestamp: now,
       endpoints: [],
+      totalLatencyMs: 0,
     },
   };
 }

@@ -3,7 +3,8 @@
  *
  * Provides:
  * - Authentication state management
- * - Auto-refreshing dashboard data
+ * - Auto-refreshing dashboard data (uses v1/metrics/aggregate with fallback)
+ * - Session ID tracking for session recording (Feature #3)
  * - Loading and error states
  * - Sign in/out functionality
  */
@@ -13,7 +14,7 @@ import {
   UnifiedMetricsPayload,
   AuthState,
   getAuthState,
-  fetchDashboardData,
+  fetchAggregateData,
   getMockDashboardData,
   signIn as apiSignIn,
   signOut as apiSignOut,
@@ -38,6 +39,9 @@ interface UseMetricsJWTReturn {
   auth: AuthState;
   isAuthenticated: boolean;
 
+  // Session tracking (Feature #3)
+  sessionId: string;
+
   // Loading/Error states
   isLoading: boolean;
   error: string | null;
@@ -46,6 +50,18 @@ interface UseMetricsJWTReturn {
   refresh: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   signOut: () => Promise<void>;
+}
+
+/**
+ * Generate a stable session ID for session recording.
+ * Persists across re-renders but resets on page refresh.
+ */
+function generateSessionId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for environments without crypto.randomUUID
+  return `s-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function useMetricsJWT(options: UseMetricsJWTOptions = {}): UseMetricsJWTReturn {
@@ -66,11 +82,14 @@ export function useMetricsJWT(options: UseMetricsJWTOptions = {}): UseMetricsJWT
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Session ID — stable for the lifetime of this component instance
+  const sessionIdRef = useRef(generateSessionId());
+
   // Refs for cleanup
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const mountedRef = useRef(true);
 
-  // Fetch dashboard data
+  // Fetch dashboard data using v1/metrics/aggregate (with fallback)
   const fetchData = useCallback(async () => {
     if (!mountedRef.current) return;
 
@@ -93,8 +112,8 @@ export function useMetricsJWT(options: UseMetricsJWTOptions = {}): UseMetricsJWT
         return;
       }
 
-      // Fetch from VPS via JWT proxy
-      const result = await fetchDashboardData();
+      // Fetch from VPS via JWT proxy (v1/aggregate → fallback to /dashboard)
+      const result = await fetchAggregateData(sessionIdRef.current);
 
       if (!mountedRef.current) return;
 
@@ -201,6 +220,7 @@ export function useMetricsJWT(options: UseMetricsJWTOptions = {}): UseMetricsJWT
     source,
     auth,
     isAuthenticated: auth.authenticated,
+    sessionId: sessionIdRef.current,
     isLoading,
     error,
     refresh,
