@@ -1,0 +1,11 @@
+# AlgoTrendy Localhost CLI Requirements
+# Install with: pip install -r requirements.txt
+
+# HTTP client for health checks
+requests>=2.31.0
+
+# Interactive CLI menu with arrow key navigation
+inquirer>=3.1.0
+
+# Optional: For better SSH tunnel management (if needed)
+# paramiko>=3.3.0

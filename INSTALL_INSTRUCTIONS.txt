@@ -1,0 +1,70 @@
+╔════════════════════════════════════════════════════════════╗
+║         AlgoTrendy Localhost CLI - Installation           ║
+╚════════════════════════════════════════════════════════════╝
+
+✅ SETUP COMPLETE!
+
+Your PowerShell profile has been configured with the 'algo' command.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 HOW TO USE
+
+1. CLOSE your current PowerShell terminal
+2. OPEN a new PowerShell terminal
+3. Run:
+
+   algo up
+
+That's it!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 WHAT IT DOES
+
+✓ Tests VPS connectivity
+✓ Establishes SSH tunnels (localhost:9000, localhost:3000)
+✓ Starts VPS services if needed
+✓ Verifies health end-to-end
+✓ Opens browser to http://localhost:3000
+✓ Exits cleanly (services keep running)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 COMMANDS
+
+algo up              # Start everything
+algo up --verbose    # Start with detailed output
+algotrendy up        # Alias (backwards compatible)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 TROUBLESHOOTING
+
+If "algo up" doesn't work:
+
+1. Make sure you CLOSED and REOPENED PowerShell
+2. Test the function exists:
+
+   Get-Command algo
+
+3. If that fails, your profile might not be loading:
+
+   & $PROFILE
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📚 DOCUMENTATION
+
+README.md               - Quick reference
+LOCALHOST_RUNBOOK.md   - Complete guide
+QUICKSTART.md          - Getting started
+vps_scripts/README.md  - VPS deployment
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Ready? Close this terminal, open a new one, and run:
+
+algo up
+
+🚀 Let's go!
