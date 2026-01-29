@@ -5,43 +5,39 @@ import { Panel } from '@/app/components/ui/panel';
 import { Timestamp } from '@/app/components/ui/timestamp';
 import { Badge, MarketBadge } from '@/app/components/ui/badge';
 import { Label, cn } from '@/app/components/ui/typography';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
-import { 
-  AlertTriangle, 
+import { fetchDashboardData, type FetchMode } from '@/api/metrics';
+import {
+  AlertTriangle,
   Cpu,
-  GitCommit, 
-  ShieldAlert, 
+  GitCommit,
+  ShieldAlert,
   Terminal,
   Wifi,
   WifiOff,
+  Radio,
+  RadioOff,
 } from 'lucide-react';
+
+type DataSource = 'live' | 'mock' | 'connecting';
 
 export default function App() {
   const [data, setData] = useState<DashboardState>(MOCK_DATA);
-  const [isConnected, setIsConnected] = useState(false);
+  const [dataSource, setDataSource] = useState<DataSource>('connecting');
+  const [lastError, setLastError] = useState<string | null>(null);
   const [lastSync, setLastSync] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
-      try {
-        const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-48f63c42/dashboard`, {
-          headers: {
-            'Authorization': `Bearer ${publicAnonKey}`
-          }
-        });
-        
-        if (response.ok) {
-          const json = await response.json();
-          setData(json);
-          setIsConnected(true);
-          setLastSync(new Date().toISOString());
-        } else {
-            console.warn("Failed to fetch dashboard data, using local mock.");
-            setIsConnected(false);
-        }
-      } catch (e) {
-        console.error("Error fetching data:", e);
-        setIsConnected(false);
+      const result = await fetchDashboardData('auto');
+
+      setData(result.data);
+      setDataSource(result.source);
+      setLastSync(new Date().toISOString());
+
+      if (result.error) {
+        setLastError(result.error);
+      } else {
+        setLastError(null);
       }
     };
 
@@ -52,6 +48,8 @@ export default function App() {
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  const isConnected = dataSource === 'live';
 
   const isNominal = data.verdict.status === 'NOMINAL';
 
@@ -92,8 +90,19 @@ export default function App() {
             <div className="text-right pl-8 border-l border-neutral-800/50 flex flex-col items-end gap-1">
               <div className="flex items-center gap-2">
                  <Label className="text-[10px] text-indigo-400/80">Evaluated Time</Label>
-                 {/* Connection Indicator */}
-                 <div className={cn("w-1.5 h-1.5 rounded-full", isConnected ? "bg-emerald-500" : "bg-amber-500")} title={isConnected ? "Live Feed" : "Simulated/Offline"} />
+                 {/* Data Source Indicator */}
+                 <div
+                   className={cn(
+                     "flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono",
+                     dataSource === 'live' ? "bg-emerald-900/30 text-emerald-400" :
+                     dataSource === 'connecting' ? "bg-blue-900/30 text-blue-400" :
+                     "bg-amber-900/30 text-amber-400"
+                   )}
+                   title={lastError || (dataSource === 'live' ? 'Connected to VPS' : 'Using mock data')}
+                 >
+                   {dataSource === 'live' ? <Radio className="w-3 h-3" /> : <RadioOff className="w-3 h-3" />}
+                   {dataSource === 'live' ? 'VPS' : dataSource === 'connecting' ? '...' : 'MOCK'}
+                 </div>
               </div>
               <Timestamp iso={data.evalTime} type="eval" showIcon className="text-base" />
             </div>
