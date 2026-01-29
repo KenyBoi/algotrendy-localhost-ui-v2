@@ -11,18 +11,17 @@ const VPS_METRICS_ENDPOINT = Deno.env.get("VPS_METRICS_ENDPOINT") ?? "";
 const PROXY_API_KEY = Deno.env.get("PROXY_API_KEY") ?? "";
 
 // Allowed paths to proxy (whitelist for security)
+// These match the actual VPS metrics API endpoints from /health
 const ALLOWED_PATHS = [
   "/health",
-  "/metrics",
-  "/metrics/summary",
-  "/metrics/events",
-  "/system/activity",
-  "/system/status",
-  "/broker/status",
-  "/positions",
-  "/strategies",
-  "/gates",
-  "/trades",
+  "/brokers/status",          // Broker connection status
+  "/trades/live",             // Currently open trades
+  "/trades/history",          // Trade history (supports ?hours=N)
+  "/strategies/proving",      // Strategy proving conveyor state
+  "/strategies/promotions",   // Promotion history and state
+  "/metrics/gate-pressure",   // Gate pressure and denial analysis
+  "/docs",
+  "/redoc",
 ];
 
 // Enable CORS
@@ -83,7 +82,7 @@ app.get("/metrics-proxy/proxy", async (c) => {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
-        // Forward any custom headers if needed
+        "Authorization": `Bearer ${PROXY_API_KEY}`,  // Forward API key to VPS nginx
       },
     });
 
@@ -133,17 +132,23 @@ app.get("/metrics-proxy/dashboard", async (c) => {
     }
 
     // Fetch all required endpoints in parallel
+    // Using correct VPS API endpoint paths (from /health listing)
     const endpoints = [
-      "/broker/status",
-      "/trades",
-      "/strategies",
-      "/gates",
-      "/system/activity"
+      "/brokers/status",
+      "/trades/live",
+      "/strategies/proving",
+      "/strategies/promotions",
+      "/metrics/gate-pressure"
     ];
 
     const fetchPromises = endpoints.map(async (endpoint) => {
       try {
-        const res = await fetch(`${VPS_METRICS_ENDPOINT}${endpoint}`);
+        const res = await fetch(`${VPS_METRICS_ENDPOINT}${endpoint}`, {
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${PROXY_API_KEY}`,  // Forward API key to VPS nginx
+          },
+        });
         if (res.ok) {
           return { endpoint, data: await res.json(), success: true };
         }
@@ -155,42 +160,48 @@ app.get("/metrics-proxy/dashboard", async (c) => {
 
     const results = await Promise.all(fetchPromises);
 
-    // Build aggregated response
-    const broker = results.find(r => r.endpoint === "/broker/status")?.data || {};
-    const trades = results.find(r => r.endpoint === "/trades")?.data || {};
-    const strategies = results.find(r => r.endpoint === "/strategies")?.data || {};
-    const gates = results.find(r => r.endpoint === "/gates")?.data || {};
-    const activity = results.find(r => r.endpoint === "/system/activity")?.data || {};
+    // Build aggregated response (matching VPS API endpoint paths)
+    const broker = results.find(r => r.endpoint === "/brokers/status")?.data || {};
+    const trades = results.find(r => r.endpoint === "/trades/live")?.data || {};
+    const proving = results.find(r => r.endpoint === "/strategies/proving")?.data || {};
+    const promotions = results.find(r => r.endpoint === "/strategies/promotions")?.data || {};
+    const gatePressure = results.find(r => r.endpoint === "/metrics/gate-pressure")?.data || {};
 
     const evalTime = new Date().toISOString();
+
+    // Determine broker connection status
+    const isConnected = broker.connected === true;
+
+    // Count active strategies from proving data
+    const activeStrategies = proving.strategies?.filter((s: any) => s.state === "active")?.length || 0;
 
     // Transform to dashboard state format
     const dashboardState = {
       evalTime,
       verdict: {
-        status: broker.connection_status === "connected" ? "NOMINAL" : "DEGRADED",
-        message: broker.connection_status === "connected"
+        status: isConnected ? "NOMINAL" : "DEGRADED",
+        message: isConnected
           ? "System operating within normal parameters"
           : "Broker connection issue detected",
         evalTime
       },
       recommendation: {
-        action: activity.seeding_active ? "MONITOR" : "INVESTIGATE",
-        details: activity.seeding_active
-          ? "Seeding scheduler active. No intervention required."
-          : "Seeding scheduler inactive. Check system status."
+        action: activeStrategies > 0 ? "MONITOR" : "INVESTIGATE",
+        details: activeStrategies > 0
+          ? `${activeStrategies} strategies active. System operating.`
+          : "No active strategies. Check proving pipeline."
       },
-      confidence: broker.connection_status === "connected" ? 94.5 : 65.0,
+      confidence: isConnected ? 94.5 : 65.0,
       markets: {
         FUT: {
           market: "FUT",
-          connected: broker.connection_status === "connected",
+          connected: isConnected,
           latencyMs: broker.latency_ms || 0,
           lastUpdate: broker.timestamp_utc || evalTime,
           drift: 0.02,
-          activeStrategies: strategies.active_count || 0,
-          lastSignal: strategies.last_signal || null,
-          lastBlocked: gates.last_blocked || null
+          activeStrategies: activeStrategies,
+          lastSignal: proving.last_signal || null,
+          lastBlocked: gatePressure.last_denial || null
         },
         CRY: {
           market: "CRY",
@@ -203,26 +214,26 @@ app.get("/metrics-proxy/dashboard", async (c) => {
           lastBlocked: null
         }
       },
-      positions: (trades.open_positions || []).map((p: any, i: number) => ({
+      positions: (trades.positions || []).map((p: any, i: number) => ({
         id: `p${i + 1}`,
         symbol: p.symbol,
         market: "FUT",
-        size: p.size,
-        entryPrice: p.entry_price,
-        currentPrice: p.current_price,
-        pnl: p.unrealized_pnl,
-        openTime: p.open_time
+        size: p.size || p.quantity,
+        entryPrice: p.entry_price || p.avg_price,
+        currentPrice: p.current_price || p.mark_price,
+        pnl: p.unrealized_pnl || p.pnl,
+        openTime: p.open_time || p.timestamp
       })),
       alerts: [],
       sessionLog: [
         { id: "l1", time: evalTime, category: "SYSTEM", message: "Live data fetched from VPS" }
       ],
       metrics: {
-        interventionPreview: gates.intervention_preview || "No intervention pending",
-        gatePressure: gates.pressure || 0,
-        intentQuality: strategies.intent_quality || 100,
-        autoSafety: activity.auto_safety ? "ENABLED" : "DISABLED",
-        controlLoop: activity.control_loop ? "ACTIVE" : "INACTIVE"
+        interventionPreview: gatePressure.pending_action || "No intervention pending",
+        gatePressure: gatePressure.current_pressure || 0,
+        intentQuality: proving.pipeline_health || 100,
+        recentPromotions: promotions.recent_count || 0,
+        lastPromotion: promotions.last_promotion || null
       },
       _proxy: {
         source: "vps-live",
