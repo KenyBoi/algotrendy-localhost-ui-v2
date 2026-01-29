@@ -21,7 +21,9 @@ app.use(
 );
 
 // Health check endpoint
-app.get("/make-server-48f63c42/health", (c) => {
+// NOTE: Supabase strips /functions/v1/{function-name} prefix before passing to function
+// So we only define the path AFTER the function name
+app.get("/health", (c) => {
   return c.json({ status: "ok" });
 });
 
@@ -106,7 +108,7 @@ const DEFAULT_DASHBOARD_STATE = {
   }
 };
 
-app.get("/make-server-48f63c42/dashboard", async (c) => {
+app.get("/dashboard", async (c) => {
   try {
     let state = await kv.get("dashboard_state");
     
@@ -127,7 +129,7 @@ app.get("/make-server-48f63c42/dashboard", async (c) => {
   }
 });
 
-app.post("/make-server-48f63c42/dashboard/reset", async (c) => {
+app.post("/dashboard/reset", async (c) => {
     const now = new Date().toISOString();
     const state = { ...DEFAULT_DASHBOARD_STATE, evalTime: now };
     await kv.set("dashboard_state", state);
